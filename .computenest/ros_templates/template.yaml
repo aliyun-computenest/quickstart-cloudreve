@@ -101,7 +101,6 @@ Parameters:
     Label:
       en: VSwitch ID
       zh-cn: 交换机实例ID
-    Default: ''
     AssociationProperty: 'ALIYUN::ECS::VSwitch::VSwitchId'
     AssociationPropertyMetadata:
       VpcId: VpcId
@@ -153,24 +152,6 @@ Resources:
       InternetMaxBandwidthOut: 5
       IoOptimized: optimized
       MaxAmount: 1
-  RunInstallCommand:
-    Type: ALIYUN::ECS::RunCommand
-    Properties:
-      InstanceIds:
-        Fn::GetAtt:
-        - InstanceGroup
-        - InstanceIds
-      Type: RunShellScript
-      Sync: true
-      Timeout: 3600
-      CommandContent:
-        Fn::Sub:
-          - |
-            nohup ./cloudreve > output.log 2>&1 &
-            sleep 10
-            ARGUS_VERSION=3.5.7 /bin/bash -c "$(curl -sS https://cms-agent-${RegionId}.oss-${RegionId}-internal.aliyuncs.com/Argus/agent_install_ecs-1.7.sh)" >> /root/install_cms_agent.log 2>&1
-          - RegionId:
-              Ref: ALIYUN::Region
 Outputs:
   ServerAddress:
     Description:

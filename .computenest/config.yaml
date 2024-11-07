@@ -97,3 +97,23 @@ ImageBuilder:
       wget https://github.com/cloudreve/Cloudreve/releases/download/3.8.3/cloudreve_3.8.3_linux_amd64.tar.gz
       tar -zxvf cloudreve_3.8.3_linux_amd64.tar.gz
       chmod +x ./cloudreve
+      
+      cat > /etc/systemd/system/cloudreve.service <<EOF
+      [Unit]
+      Description=Cloudreve Service
+      
+      [Service]
+      Type=simple
+      Restart=on-failure
+      WorkingDirectory=/root
+      ExecStart=/usr/bin/nohup /root/cloudreve > /root/output.log 2>&1 &
+      TimeoutStartSec=0
+      
+      [Install]
+      WantedBy=multi-user.target
+      EOF
+      
+      systemctl enable cloudreve
+      systemctl start cloudreve
+      
+      ARGUS_VERSION=3.5.7 /bin/bash -c "$(curl -sS https://cms-agent-ap-southeast-1.oss-ap-southeast-1-internal.aliyuncs.com/Argus/agent_install_ecs-1.7.sh)" >> /root/install_cms_agent.log 2>&1
