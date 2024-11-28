@@ -12,35 +12,6 @@ Service:
     TemplateConfigs:
       - Name: 单机版
         Url: 'ros_templates/template.yaml'
-        AllowedRegions:
-          - cn-qingdao
-          - cn-beijing
-          - cn-zhangjiakou
-          - cn-huhehaote
-          - cn-wulanchabu
-          - cn-hangzhou
-          - cn-shanghai
-          - cn-shenzhen
-          - cn-chengdu
-          - cn-heyuan
-          - cn-guangzhou
-          - cn-hongkong
-          - ap-northeast-1
-          - ap-southeast-1
-          - ap-southeast-3
-          - ap-southeast-5
-          - ap-southeast-6
-          - us-east-1
-          - us-west-1
-          - eu-west-1
-          - eu-central-1
-          - me-east-1
-          - me-central-1
-          - cn-nanjing
-          - cn-fuzhou
-          - ap-southeast-7
-          - ap-northeast-2
-          - cn-wuhan-lr
   ServiceType: private
   ServiceInfo:
     Locale: zh-CN
@@ -95,56 +66,91 @@ ImageBuilder:
     Tags: [ ]
     CommandContent: |-
         #!/bin/bash
-        wget -q https://github.com/cloudreve/Cloudreve/releases/download/3.8.3/cloudreve_3.8.3_linux_amd64.tar.gz
-        tar -zxvf cloudreve_3.8.3_linux_amd64.tar.gz && rm -f cloudreve_3.8.3_linux_amd64.tar.gz
-        chmod +x /root/cloudreve
-
-        cat > /root/start_cloudreve.sh <<'EOF'
-        #!/bin/bash
-        /root/cloudreve > /root/start.log 2>&1 &
-        while true; do
-            if [[ -f /root/credentials.txt ]]; then
-                break
-            elif [[ -f /root/start.log ]]; then
-                admin_user=$(grep -oP '(?<=Admin user name: ).*' /root/start.log)
-                admin_pass=$(grep -oP '(?<=Admin password: ).*' /root/start.log)
-
-                if [[ -n "$admin_user" && -n "$admin_pass" ]]; then
-                    #/root/cloudreve --database-script ResetAdminPassword >> /root/start.log 2>&1
-                    #db_pass=$(grep -oP '(?<=Initial admin user password changed to:).*' /root/start.log)
-                    echo "cloudreve_username = $admin_user" > /root/credentials.txt
-                    echo "cloudreve_password = $admin_pass" >> /root/credentials.txt
-                    #echo "mariadb_password = $db_pass" >> /root/credentials.txt
-                    break
-                fi
-            else
-                echo "日志文件尚未生成，继续等待..."
-            fi
-            sleep 5
-        done
-
-        /root/cloudreve > /root/start.log 2>&1
-
-        EOF
-
-        chmod +x /root/start_cloudreve.sh
-
-        cat > /etc/systemd/system/cloudreve.service <<EOF
-        [Unit]
-        Description=Cloudreve
-        Documentation=https://docs.cloudreve.org
-        After=network.target
-        After=mysqld.service
-        Wants=network.target
-
-        [Service]
-        WorkingDirectory=/root
-        ExecStart=/root/start_cloudreve.sh
-        EOF
-
+        wget https://aliyun-oss-testzh.oss-cn-beijing.aliyuncs.com/swas-applicaions/cloudreve/applications.tar.gz
+        tar -xvf applications.tar.gz -C /
+        mv /usr/local/applications/aria2/aria2.service /usr/lib/systemd/system/
+        mv /usr/local/applications/cloudreve/cloudreve-master.service /usr/lib/systemd/system/
         systemctl daemon-reload
-        systemctl enable cloudreve
-        systemctl start cloudreve
+
+        systemctl enable aria2.service
+        systemctl enable cloudreve-master.service
+
+        rm -rf /root/applications.tar.gz
+
+        # 安装mariadb数据库
+        yum -y install mariadb-server expect
+
+        # 修改配置文件c, 仅仅监听localhost，防止外部攻击
+        sudo sed -i 's/^#bind-address=0\.0\.0\.0/bind-address=127.0.0.1/' /etc/my.cnf.d/mariadb-server.cnf
+
+        # 启动数据库服务，同时设置开机启动
+        systemctl start mariadb
+        # systemctl status mariadb
+        systemctl enable mariadb
+
+        cat > /root/init_db.sh << EOF
+        #!/usr/bin/expect -f
+
+        # 启动 mysql_secure_installation
+        spawn mysql_secure_installation
+
+        # 设置 root 密码（如果需要）
+        expect "Enter current password for root (enter for none):"
+        send "\r"
+        expect "Switch to unix_socket authentication [Y/n]"
+        send "n\r"
+
+        # 设置新 root 密码
+        expect "Set root password? \[Y/n\]"
+        send "Y\r"
+        expect "New password:"
+        send "M54nbB76\r"
+        expect "Re-enter new password:"
+        send "M54nbB76\r"
+
+        # 移除匿名用户
+        expect "Remove anonymous users? \[Y/n\]"
+        send "Y\r"
+
+        # 禁止 root 远程登录
+        expect "Disallow root login remotely? \[Y/n\]"
+        send "Y\r"
+
+        # 删除 test 数据库
+        expect "Remove test database and access to it? \[Y/n\]"
+        send "Y\r"
+
+        # 重新加载权限表
+        expect "Reload privilege tables now? \[Y/n\]"
+        send "Y\r"
+
+        expect eof
+        EOF
+
+        # 您可以设置 MariaDB 的 root 密码（8位随机密码: M54nbB76）、移除匿名用户、禁止 root 远程登录、删除测试数据库等
+        chmod +x /root/init_db.sh
+        expect /root/init_db.sh
+        rm -rf /root/init_db.sh
+
+
+        # 创建业务数据库，创建cloudreve用户，设置密码（同root密码），同时设置cloudreve用户对表的操作权限
+        mysql -uroot -pM54nbB76 -e "create database cloudreve;create user 'cloudreve'@'localhost' IDENTIFIED BY 'M54nbB76';GRANT ALL PRIVILEGES ON cloudreve.* TO 'cloudreve'@'localhost';"
+
+        # 安装redis
+        yum install -y redis.x86_64
+        sudo sed -i 's/^bind 127\.0\.0\.1 -::1/bind 127.0.0.1/' /etc/redis.conf
+        # 设置redis开启启动
+        systemctl enable redis.service
+        systemctl start redis.service
+
+        # 登录
+        redis-cli -h 127.0.0.1 -p 6379 &
+
+        # 启动cloudreve
+        systemctl daemon-reload
+        systemctl enable aria2.service
+        systemctl enable cloudreve-master.service
+
 
         ARGUS_VERSION=3.5.7 /bin/bash -c "$(curl -sS https://cms-agent-ap-southeast-1.oss-ap-southeast-1-internal.aliyuncs.com/Argus/agent_install_ecs-1.7.sh)" 2>&1
 
