@@ -95,19 +95,9 @@ ImageBuilder:
     Tags: [ ]
     CommandContent: |-
         #!/bin/bash
-        wget https://aliyun-oss-testzh.oss-cn-beijing.aliyuncs.com/swas-applicaions/cloudreve/applications.tar.gz
-        tar -xvf applications.tar.gz -C /
-        mv /usr/local/applications/aria2/aria2.service /usr/lib/systemd/system/
-        mv /usr/local/applications/cloudreve/cloudreve-master.service /usr/lib/systemd/system/
-        systemctl daemon-reload
-
-        systemctl enable aria2.service
-        systemctl enable cloudreve-master.service
-
-        rm -rf /root/applications.tar.gz
 
         # 安装mariadb数据库
-        yum -y install mariadb-server expect
+        yum -y install mariadb-server nmap-ncat
 
         # 修改配置文件c, 仅仅监听localhost，防止外部攻击
         sudo sed -i 's/^#bind-address=0\.0\.0\.0/bind-address=127.0.0.1/' /etc/my.cnf.d/mariadb-server.cnf
@@ -130,12 +120,8 @@ ImageBuilder:
         send "n\r"
 
         # 设置新 root 密码
-        expect "Set root password? \[Y/n\]"
-        send "Y\r"
-        expect "New password:"
-        send "M54nbB76\r"
-        expect "Re-enter new password:"
-        send "M54nbB76\r"
+        expect "Change the root password? [Y/n]"
+        send "n\r"
 
         # 移除匿名用户
         expect "Remove anonymous users? \[Y/n\]"
@@ -156,14 +142,10 @@ ImageBuilder:
         expect eof
         EOF
 
-        # 您可以设置 MariaDB 的 root 密码（8位随机密码: M54nbB76）、移除匿名用户、禁止 root 远程登录、删除测试数据库等
+        # 您可以设置 MariaDB 的密码、移除匿名用户、禁止 root 远程登录、删除测试数据库等
         chmod +x /root/init_db.sh
         expect /root/init_db.sh
         rm -rf /root/init_db.sh
-
-
-        # 创建业务数据库，创建cloudreve用户，设置密码（同root密码），同时设置cloudreve用户对表的操作权限
-        mysql -uroot -pM54nbB76 -e "create database cloudreve;create user 'cloudreve'@'localhost' IDENTIFIED BY 'M54nbB76';GRANT ALL PRIVILEGES ON cloudreve.* TO 'cloudreve'@'localhost';"
 
         # 安装redis
         yum install -y redis.x86_64
@@ -175,11 +157,171 @@ ImageBuilder:
         # 登录
         redis-cli -h 127.0.0.1 -p 6379 &
 
-        # 启动cloudreve
+        cd /root/
+        wget https://aliyun-oss-testzh.oss-cn-beijing.aliyuncs.com/swas-applicaions/cloudreve/applications.tar.gz
+        tar -xvf applications.tar.gz -C /
+        mv /usr/local/applications/aria2/aria2.service /usr/lib/systemd/system/
+        mv /usr/local/applications/cloudreve/cloudreve-master.service /usr/lib/systemd/system/
         systemctl daemon-reload
-        systemctl enable aria2.service
-        systemctl enable cloudreve-master.service
 
+        # 仅仅将aria2服务设置为开机启动，cloudreve-master服务，不需要设置开机启动
+        # 由开机初始化服务，负责启动cloudreve-master
+        # Tips：切记不要将cloudreve-master设置为开机启动，同时不要启动cloudreve-master.service
+        systemctl enable aria2.service
+
+        rm -rf /root/applications.tar.gz
+
+
+        cat > /usr/lib/systemd/system/app-init.service << EOF
+        [Unit]
+        Description=Application init server, run init script and cleanup oneself after execution
+        Wants=cloud-final.service
+        Requires=network-online.target
+        After=network-online.target cloud-final.service
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/bin/app-init.sh
+        RemainAfterExit=false
+        KillMode=control-group
+        Restart=no
+        StandardOutput=file:/var/log/app-init.log
+        StandardError=file:/var/log/app-init.log
+
+        [Install]
+        WantedBy=multi-user.target
+        EOF
+
+
+        cat > /usr/local/bin/app-init.sh << 'END'
+        #!/bin/bash
+
+        # 初始化应用......
+        echo "$(date +"%Y-%m-%d %H:%M:%S") init applications......"
+
+        # 认证文件位置: /root/applications.auth
+        AUTH_FILE="/root/applications.auth"
+
+        ########## 可编辑区域 start ##########
+
+        DB_ROOT_PASSWORD=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 12)
+        DB_CLOUDREVE_USERNAME="cloudreve"
+        DB_CLOUDREVE_PASSWORD=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 12)
+        CLOUDREVE_DATABASE_NAME="cloudreve"
+
+        CLOUDREVE_ADMIN_USERNAME="admin@cloudreve.org"
+        CLOUDREVE_ADMIN_PASSWORD="" # TODO: 从cloudreve日志中获取
+
+        # usage: check_tcp_service_ready is_ready_result 127.0.0.1 3306
+        check_tcp_service_ready() {
+          local check_result=$1
+          local host=$2
+          local tcp_port=$3
+
+          local retry_interval=2
+          local max_attempts=10
+          local attempt=1
+
+          echo "Checking if the service on $host:$tcp_port is ready..."
+
+          while [ $attempt -le $max_attempts ]; do
+            if nc -z $host $tcp_port; then
+              echo "Service is ready on $host:$tcp_port"
+              eval $check_result="yes"
+              return
+            else
+              echo "Service is not ready yet. Attempt $attempt/$max_attempts..."
+              attempt=$((attempt + 1))
+              sleep $retry_interval
+            fi
+          done
+
+          echo "Service is not ready after $max_attempts attempts."
+
+          eval $check_result="no"
+        }
+
+        # 检查mariadb数据库服务是否Ready
+        DB_SERVICE_NAME="mariadb.service"
+        is_mariadb_svc_ready="no"
+
+        echo "$(date +"%Y-%m-%d %H:%M:%S") check ${DB_SERVICE_NAME} ready or not"
+
+        check_tcp_service_ready is_mariadb_svc_ready 127.0.0.1 3306
+        if [ ${is_mariadb_svc_ready} = "yes" ]; then
+          echo "$(date +"%Y-%m-%d %H:%M:%S") ${DB_SERVICE_NAME} is ready"
+        else
+          echo "$(date +"%Y-%m-%d %H:%M:%S") ${DB_SERVICE_NAME} not ready"
+          exit 1
+        fi
+
+        # 初始化数据库
+        echo "$(date +"%Y-%m-%d %H:%M:%S") init database, create user and database"
+
+        mysql -uroot -pnone -e "create database ${CLOUDREVE_DATABASE_NAME};"
+        mysql -uroot -pnone -e "create user '${DB_CLOUDREVE_USERNAME}'@'localhost' IDENTIFIED BY '${DB_CLOUDREVE_PASSWORD}';"
+        mysql -uroot -pnone -e "GRANT ALL PRIVILEGES ON ${CLOUDREVE_DATABASE_NAME}.* TO '${DB_CLOUDREVE_USERNAME}'@'localhost';"
+        mysql -uroot -pnone -e "FLUSH PRIVILEGES;"
+        mysql -uroot -pnone -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${DB_ROOT_PASSWORD}';"
+
+        # 配置和启动cloudreve-master.service服务
+        echo "$(date +"%Y-%m-%d %H:%M:%S") init and start cloudreve service"
+        cat > /usr/local/applications/cloudreve/master.ini << EOF
+        [System]
+        Mode = master
+        Listen = :80
+        Debug = false
+        ProxyHeader = "X-Forwarded-For"
+        AuthFile = ${AUTH_FILE}
+
+        [Database]
+        Type = mysql
+        Port = 3306
+        User = ${DB_CLOUDREVE_USERNAME}
+        Password = ${DB_CLOUDREVE_PASSWORD}
+        Host = 127.0.0.1
+        Name = ${CLOUDREVE_DATABASE_NAME}
+        TablePrefix = ""
+        Charset = utf8
+
+        [Redis]
+        Network = "tcp"
+        Server = "127.0.0.1:6379"
+        User = ""
+        Password = ""
+        DB = "0"
+
+        [MasterNode]
+        Aria2Enabled = true
+        Aria2Server = "http://127.0.0.1:6800/"
+        Aria2Token = "cloudreve"
+        TempPath = "/usr/local/applications/cloudreve/temp_data"
+        Interval = 10
+        Timeout = 10
+        EOF
+
+        systemctl enable cloudreve-master.service
+        systemctl start cloudreve-master.service
+        sleep 5s
+
+        # 最后, 将应用的用户名和密码写入文件
+        #echo "cloudreve_admin_username: ${CLOUDREVE_ADMIN_USERNAME}" > ${AUTH_FILE}
+        #echo "cloudreve_admin_password: ${CLOUDREVE_ADMIN_PASSWORD}" >> ${AUTH_FILE}
+        echo "mariadb_root_password: ${DB_ROOT_PASSWORD}" >> ${AUTH_FILE}
+        echo "mariadb_${DB_CLOUDREVE_USERNAME}_password: ${DB_CLOUDREVE_PASSWORD}" >> ${AUTH_FILE}
+
+        ########## 可编辑区域 end ##########
+
+        # 执行成功后删除脚本, 勿动
+        rm -- "$0"
+        systemctl disable app-init.service
+        rm -rf /etc/systemd/system/app-init.service /usr/lib/systemd/system/app-init.service
+        systemctl daemon-reload
+        END
+
+        chmod 0755 /usr/local/bin/app-init.sh
+        systemctl enable app-init.service
+        systemctl start app-init.service
 
         ARGUS_VERSION=3.5.7 /bin/bash -c "$(curl -sS https://cms-agent-ap-southeast-1.oss-ap-southeast-1-internal.aliyuncs.com/Argus/agent_install_ecs-1.7.sh)" 2>&1
 
@@ -190,7 +332,27 @@ ImageBuilder:
         systemctl stop rpcbind.service
         systemctl disable rpcbind.service
         systemctl disable rpcbind.socket
+        systemd-analyze blame
 
+        # 关闭防火墙
+        systemctl disable firewalld
+        systemctl stop firewalld
+
+        # 关闭update-motd 服务
+        systemctl disable update-motd.service
+        systemctl stop update-motd.service
+
+        systemctl stop systemd-resolved.service
+        systemctl disable systemd-resolved.service
+        systemctl stop rpcbind.socket
+        systemctl stop rpcbind.service
+        systemctl disable rpcbind.service
+        systemctl disable rpcbind.socket
+
+        # 升级基础组件：
+        dnf upgrade-minimal
+        # 安装基础组件
+        yum install -y nmap-ncat
 
         function clean_log(){
             rm -fv /usr/local/aegis/aegis_update/data/data.[0-9]
