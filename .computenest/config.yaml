@@ -454,5 +454,3 @@ ImageBuilder:
         clean_log
         clean_cmd_history
         clean_root_passwd
-
-        systemctl start app-init.service
