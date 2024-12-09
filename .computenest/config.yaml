@@ -96,8 +96,37 @@ ImageBuilder:
     CommandContent: |-
         #!/bin/bash
 
+        # 关闭基础镜像非必要服务，降低基础服务资源占用
+        systemctl stop systemd-resolved.service
+        systemctl disable systemd-resolved.service
+        systemctl stop rpcbind.socket
+        systemctl stop rpcbind.service
+        systemctl disable rpcbind.service
+        systemctl disable rpcbind.socket
+        systemd-analyze blame
+
+        # 关闭防火墙
+        systemctl disable firewalld
+        systemctl stop firewalld
+
+        # 关闭update-motd 服务
+        systemctl disable update-motd.service
+        systemctl stop update-motd.service
+
+        systemctl stop systemd-resolved.service
+        systemctl disable systemd-resolved.service
+        systemctl stop rpcbind.socket
+        systemctl stop rpcbind.service
+        systemctl disable rpcbind.service
+        systemctl disable rpcbind.socket
+
+        # 升级基础组件：
+        dnf upgrade-minimal
+        # 安装基础组件
+        yum install -y nmap-ncat
+
         # 安装mariadb数据库
-        yum -y install mariadb-server nmap-ncat
+        yum -y install mariadb-server nmap-ncat expect
 
         # 修改配置文件c, 仅仅监听localhost，防止外部攻击
         sudo sed -i 's/^#bind-address=0\.0\.0\.0/bind-address=127.0.0.1/' /etc/my.cnf.d/mariadb-server.cnf
@@ -116,27 +145,27 @@ ImageBuilder:
         # 设置 root 密码（如果需要）
         expect "Enter current password for root (enter for none):"
         send "\r"
-        expect "Switch to unix_socket authentication [Y/n]"
+        expect "Switch to unix_socket authentication \\[Y/n\\]"
         send "n\r"
 
         # 设置新 root 密码
-        expect "Change the root password? [Y/n]"
+        expect "Change the root password? \\[Y/n\\]"
         send "n\r"
 
         # 移除匿名用户
-        expect "Remove anonymous users? \[Y/n\]"
+        expect "Remove anonymous users? \\[Y/n\\]"
         send "Y\r"
 
         # 禁止 root 远程登录
-        expect "Disallow root login remotely? \[Y/n\]"
+        expect "Disallow root login remotely? \\[Y/n\\]"
         send "Y\r"
 
         # 删除 test 数据库
-        expect "Remove test database and access to it? \[Y/n\]"
+        expect "Remove test database and access to it? \\[Y/n\\]"
         send "Y\r"
 
         # 重新加载权限表
-        expect "Reload privilege tables now? \[Y/n\]"
+        expect "Reload privilege tables now? \\[Y/n\\]"
         send "Y\r"
 
         expect eof
@@ -321,38 +350,8 @@ ImageBuilder:
 
         chmod 0755 /usr/local/bin/app-init.sh
         systemctl enable app-init.service
-        systemctl start app-init.service
 
         ARGUS_VERSION=3.5.7 /bin/bash -c "$(curl -sS https://cms-agent-ap-southeast-1.oss-ap-southeast-1-internal.aliyuncs.com/Argus/agent_install_ecs-1.7.sh)" 2>&1
-
-        # 关闭基础镜像非必要服务，降低基础服务资源占用
-        systemctl stop systemd-resolved.service
-        systemctl disable systemd-resolved.service
-        systemctl stop rpcbind.socket
-        systemctl stop rpcbind.service
-        systemctl disable rpcbind.service
-        systemctl disable rpcbind.socket
-        systemd-analyze blame
-
-        # 关闭防火墙
-        systemctl disable firewalld
-        systemctl stop firewalld
-
-        # 关闭update-motd 服务
-        systemctl disable update-motd.service
-        systemctl stop update-motd.service
-
-        systemctl stop systemd-resolved.service
-        systemctl disable systemd-resolved.service
-        systemctl stop rpcbind.socket
-        systemctl stop rpcbind.service
-        systemctl disable rpcbind.service
-        systemctl disable rpcbind.socket
-
-        # 升级基础组件：
-        dnf upgrade-minimal
-        # 安装基础组件
-        yum install -y nmap-ncat
 
         function clean_log(){
             rm -fv /usr/local/aegis/aegis_update/data/data.[0-9]
@@ -455,3 +454,5 @@ ImageBuilder:
         clean_log
         clean_cmd_history
         clean_root_passwd
+
+        systemctl start app-init.service
