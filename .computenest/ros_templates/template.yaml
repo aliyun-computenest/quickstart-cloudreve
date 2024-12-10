@@ -159,7 +159,7 @@ Outputs:
       zh-cn: 访问页面。
     Value:
       Fn::Sub:
-        - 'http://${ServerAddress}:5212'
+        - 'http://${ServerAddress}:80'
         - ServerAddress:
             Fn::Select:
             - 0
