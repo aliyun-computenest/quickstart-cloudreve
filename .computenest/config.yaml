@@ -353,6 +353,17 @@ ImageBuilder:
 
         ARGUS_VERSION=3.5.7 /bin/bash -c "$(curl -sS https://cms-agent-ap-southeast-1.oss-ap-southeast-1-internal.aliyuncs.com/Argus/agent_install_ecs-1.7.sh)" 2>&1
 
+        ###################################################
+        #  1. 清理制作镜像过程中产生的日志，避免敏感信息泄漏。    #
+        #    - 系统日志                                    #
+        #    - 应用日志                                    #
+        #  2. 清理制作镜像过程中命令行历史                    #
+        #  3. 删除所有账户默认密码，删除所有用户目录下的ssh配置  #
+        #  4. 清理缓存                                     #
+        ###################################################
+
+        set -xe
+
         function clean_log(){
             rm -fv /usr/local/aegis/aegis_update/data/data.[0-9]
             rm -fv /usr/local/aegis/aegis_client/aegis_*/data/data.[0-9]
@@ -373,6 +384,9 @@ ImageBuilder:
             rm -rf /var/log/anaconda/*
             rm -rf /var/log/sa/*
             rm -rf /var/log/conman*
+            rm -rf /var/log/journal/*
+            rm -rf /var/log/cloud-init.log
+            rm -rf /var/log/cloud-init-output.log
 
             for i in $(find /var/log/ -type f); do > $i; done
 
@@ -384,7 +398,9 @@ ImageBuilder:
             rm -rfv /var/lib/aliyun_init/*
             rm -rfv /var/lib/cloud/*
 
-            rm -rfv  /usr/local/share/aliyun-assist/*/log/*
+            if [ -d /usr/local/share/aliyun-assist/*/log/ ];then
+                rm -rfv  /usr/local/share/aliyun-assist/*/log/*
+            fi
 
             rm -rfv /etc/ssh/sshd_config.d/*
 
@@ -398,7 +414,7 @@ ImageBuilder:
             sed -i "/debug/d" /etc/hosts
 
             # Clean up useless nameservers to prevent cloudinit local domain name resolution timeout
-            sed -i '/100.100.2.136\|100.100.2.138/!d' $(realpath /etc/resolv.conf)
+            sed -i "/nameserver/d" $(realpath /etc/resolv.conf)
 
             [ -d /etc/NetworkManager/system-connections ] && rm -fv /etc/NetworkManager/system-connections/*.nmconnection
 
@@ -425,6 +441,18 @@ ImageBuilder:
             fi
         }
 
+        function reset_sshd_cfg() {
+            sed -i '/PasswordAuthentication/d' /etc/ssh/sshd_config
+            echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config
+            rm -f /etc/ssh/ssh_host_*
+        }
+
+        function clean_user_auth(){
+            passwd -l root
+            sed -i -e 's/root:[^:]*:/root:*:/g' /etc/shadow
+            rm -f /root/.ssh/*
+        }
+
         function clean_cmd_history(){
             for user in $(cut -f1 -d: /etc/passwd); do
                 if [ -f /home/$user/.bash_history ]; then
@@ -432,25 +460,11 @@ ImageBuilder:
                 fi
             done
             > /root/.bash_history
-            history -c
-            history -w
-        }
-
-        function clean_root_passwd(){
-            passwd -l root
-            sed -i '/PasswordAuthentication/d' /etc/ssh/sshd_config
-            echo 'PasswordAuthentication no' >> /etc/ssh/sshd_config
-            sed -i -e 's/root:[^:]*:/root:*:/g' /etc/shadow
-
-            for user in $(cut -f1 -d: /etc/passwd); do
-              rm -rf /home/$user/.ssh/*
-            done
-
-            rm -f /root/.ssh/*
-            rm -f /etc/ssh/ssh_host_*
         }
 
         clean_source_cache
         clean_log
+        reset_sshd_cfg
+        clean_user_auth
         clean_cmd_history
-        clean_root_passwd
+        rm -- "$0"
