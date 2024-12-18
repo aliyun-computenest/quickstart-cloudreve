@@ -85,8 +85,8 @@ Artifact:
       - cn-wuhan-lr
 ImageBuilder:
   EcsImage:
-    RegionId: ap-southeast-1
-    SourceImageId: aliyun_3_x64_20G_alibase_20240819.vhd
+    RegionId: cn-hangzhou
+    SourceImageId: m-bp125wji42l3ca0evma8
     SystemDiskSize: 20
     InstanceType: ecs.c6.large
     InternetMaxBandwidthOut: 10
