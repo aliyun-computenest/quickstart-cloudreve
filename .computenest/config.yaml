@@ -85,8 +85,8 @@ Artifact:
       - cn-wuhan-lr
 ImageBuilder:
   EcsImage:
-    RegionId: cn-hangzhou
-    SourceImageId: m-bp125wji42l3ca0evma8
+    RegionId: ap-southeast-1
+    SourceImageId: m-t4n4r6j6eg408at0i5f8
     SystemDiskSize: 20
     InstanceType: ecs.c6.large
     InternetMaxBandwidthOut: 10
