@@ -201,9 +201,9 @@ ImageBuilder:
         rm -rf /root/applications.tar.gz
 
 
-        cat > /usr/lib/systemd/system/app-init.service << EOF
+        cat > /usr/lib/systemd/system/app-init.service << SERVICE_EOF
         [Unit]
-        Description=Application init server, run init script and cleanup oneself after execution
+        Description=Application init serivce
         Wants=cloud-final.service
         Requires=network-online.target
         After=network-online.target cloud-final.service
@@ -219,14 +219,32 @@ ImageBuilder:
 
         [Install]
         WantedBy=multi-user.target
-        EOF
+        SERVICE_EOF
 
 
-        cat > /usr/local/bin/app-init.sh << 'END'
+        cat > /usr/local/bin/app-init.sh << INIT_EOF
         #!/bin/bash
 
         # 初始化应用......
         echo "$(date +"%Y-%m-%d %H:%M:%S") init applications......"
+
+        if sh /usr/local/bin/startup.sh; then
+          echo "$(date +"%Y-%m-%d %H:%M:%S") init applications successfully"
+        else
+          echo "$(date +"%Y-%m-%d %H:%M:%S") init applications failed"
+        fi
+
+        rm -rf /usr/local/bin/startup.sh
+        rm -- "$0"
+        systemctl disable app-init.service
+        rm -rf /etc/systemd/system/app-init.service /usr/lib/systemd/system/app-init.service
+        systemctl daemon-reload
+        INIT_EOF
+
+        cat > /usr/local/bin/startup.sh << 'STARTUP_EOF'
+        #!/bin/bash
+
+        set -e
 
         # 认证文件位置: /root/applications.auth
         AUTH_FILE="/root/applications.auth"
@@ -287,7 +305,7 @@ ImageBuilder:
         # 初始化数据库
         echo "$(date +"%Y-%m-%d %H:%M:%S") init database, create user and database"
 
-        mysql -uroot -pnone -e "create database ${CLOUDREVE_DATABASE_NAME};"
+        mysql -uroot -pnone -e "create database ${CLOUDREVE_DATABASE_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
         mysql -uroot -pnone -e "create user '${DB_CLOUDREVE_USERNAME}'@'localhost' IDENTIFIED BY '${DB_CLOUDREVE_PASSWORD}';"
         mysql -uroot -pnone -e "GRANT ALL PRIVILEGES ON ${CLOUDREVE_DATABASE_NAME}.* TO '${DB_CLOUDREVE_USERNAME}'@'localhost';"
         mysql -uroot -pnone -e "FLUSH PRIVILEGES;"
@@ -329,8 +347,7 @@ ImageBuilder:
         Timeout = 10
         EOF
 
-        systemctl enable cloudreve-master.service
-        systemctl start cloudreve-master.service
+        systemctl enable --now cloudreve-master.service
         sleep 5s
 
         # 最后, 将应用的用户名和密码写入文件
@@ -338,17 +355,9 @@ ImageBuilder:
         #echo "cloudreve_admin_password: ${CLOUDREVE_ADMIN_PASSWORD}" >> ${AUTH_FILE}
         echo "mariadb_root_password: ${DB_ROOT_PASSWORD}" >> ${AUTH_FILE}
         echo "mariadb_${DB_CLOUDREVE_USERNAME}_password: ${DB_CLOUDREVE_PASSWORD}" >> ${AUTH_FILE}
+        STARTUP_EOF
 
-        ########## 可编辑区域 end ##########
-
-        # 执行成功后删除脚本, 勿动
-        rm -- "$0"
-        systemctl disable app-init.service
-        rm -rf /etc/systemd/system/app-init.service /usr/lib/systemd/system/app-init.service
-        systemctl daemon-reload
-        END
-
-        chmod 0755 /usr/local/bin/app-init.sh
+        chmod 0755 /usr/local/bin/app-init.sh  /usr/local/bin/startup.sh
         systemctl enable app-init.service
 
         ARGUS_VERSION=3.5.7 /bin/bash -c "$(curl -sS https://cms-agent-ap-southeast-1.oss-ap-southeast-1-internal.aliyuncs.com/Argus/agent_install_ecs-1.7.sh)" 2>&1
